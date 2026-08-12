@@ -93,10 +93,10 @@
     <div class="stat"><div class="k">막힘</div><div class="v" id="tHit">0</div></div>
     <span class="spacer"></span>
     <select id="lv" aria-label="난이도">
-      <option value="8">쉬움 8×8</option>
-      <option value="12" selected>보통 12×12</option>
-      <option value="16">어려움 16×16</option>
-      <option value="22">아주 어려움 22×22</option>
+      <option value="10">쉬움 10×10</option>
+      <option value="16" selected>보통 16×16</option>
+      <option value="22">어려움 22×22</option>
+      <option value="28">아주 어려움 28×28</option>
     </select>
     <button id="btnRetry">다시 그리기</button>
     <button id="btnNew" class="primary">새 미로</button>
@@ -192,19 +192,19 @@ function genMaze(cols, rows){
 const startCell = () => ({x:0.5, y:1.5});
 const goalCell  = () => ({x:maze.cols*2+0.5, y:maze.rows*2-0.5});
 
-/* ── 정답 경로: 흰 통로 위에서 BFS ── */
-function solve(){
-  const {g,W,H} = maze;
-  const sx=0, sy=1, gx=maze.cols*2, gy=maze.rows*2-1;
+/* ── 정답 경로: 흰 통로 위에서 BFS. 격자 인덱스 배열을 돌려준다 ── */
+const DIRS4 = [[1,0],[-1,0],[0,1],[0,-1]];
+function solveIdx(m){
+  const {g,W,H} = m;
+  const sx=0, sy=1, gx=m.cols*2, gy=m.rows*2-1;
   const prev = new Int32Array(W*H).fill(-1);
   const q = [sy*W+sx];
   prev[sy*W+sx] = sy*W+sx;
-  const d = [[1,0],[-1,0],[0,1],[0,-1]];
   for(let h=0; h<q.length; h++){
     const cur = q[h];
     if(cur === gy*W+gx) break;
     const cx = cur%W, cy = (cur/W)|0;
-    for(const [dx,dy] of d){
+    for(const [dx,dy] of DIRS4){
       const nx=cx+dx, ny=cy+dy;
       if(nx<0||ny<0||nx>=W||ny>=H) continue;
       if(g[ny][nx]) continue;
@@ -215,12 +215,84 @@ function solve(){
   }
   const goal = gy*W+gx;
   if(prev[goal] === -1) return null;
-  const path = [];
+  const out = [];
   for(let cur = goal; ; cur = prev[cur]){
-    path.push({x: cur%W + 0.5, y: ((cur/W)|0) + 0.5});
+    out.push(cur);
     if(prev[cur] === cur) break;
   }
-  return path.reverse();
+  return out.reverse();
+}
+
+/* 화면에 그릴 정답 경로 (unit 좌표) */
+function solve(m = maze){
+  const idx = solveIdx(m);
+  if(!idx) return null;
+  return idx.map(i => ({x: i % m.W + 0.5, y: ((i / m.W)|0) + 0.5}));
+}
+
+/* ── 난이도 측정 ──
+   크기가 같아도 정답이 짧고 갈림길이 없으면 순식간에 풀린다. 실제로 재던 값은
+   22×22 에서 갈림길이 3개뿐인 미로까지 나왔다. 그래서 후보를 여러 개 만들어
+   가장 어려운 것만 내보낸다.
+   - len   : 정답 경로 길이 — 짧으면 그냥 가깝다
+   - junc  : 정답 경로에서 옆으로 새는 갈림길 수 — 헷갈릴 기회
+   - decoy : 그 갈림길이 얼마나 깊게 이어지는지 — 잘못 들었을 때의 손해
+             (한 곳이 지나치게 깊어도 점수를 독식하지 않도록 14에서 자른다) */
+function rateMaze(m){
+  const idx = solveIdx(m);
+  if(!idx) return null;
+  const {g,W,H} = m;
+  const onPath = new Uint8Array(W*H);
+  for(const i of idx) onPath[i] = 1;
+
+  let junc = 0, decoy = 0;
+  const seen = new Uint8Array(W*H);
+  for(const cur of idx){
+    const cx = cur%W, cy = (cur/W)|0;
+    for(const [dx,dy] of DIRS4){
+      const nx=cx+dx, ny=cy+dy;
+      if(nx<0||ny<0||nx>=W||ny>=H || g[ny][nx]) continue;
+      const ni = ny*W+nx;
+      if(onPath[ni]) continue;
+      junc++;
+      // 곁가지의 최대 깊이 = 정답 경로를 밟지 않는 BFS. 가지끼리 겹치지 않아
+      // 전체 비용은 칸 수에 비례한다.
+      seen[ni] = 1;
+      const q = [ni], dep = [1];
+      let mx = 0;
+      for(let h=0; h<q.length; h++){
+        if(dep[h] > mx) mx = dep[h];
+        const ax = q[h]%W, ay = (q[h]/W)|0;
+        for(const [ex,ey] of DIRS4){
+          const bx=ax+ex, by=ay+ey;
+          if(bx<0||by<0||bx>=W||by>=H || g[by][bx]) continue;
+          const bi = by*W+bx;
+          if(onPath[bi] || seen[bi]) continue;
+          seen[bi] = 1; q.push(bi); dep.push(dep[h]+1);
+        }
+      }
+      decoy += Math.min(mx, 14);
+    }
+  }
+  return {len: idx.length, junc, decoy, score: idx.length + 6*junc + 2*decoy};
+}
+
+/* 후보를 여러 개 만들어 가장 어려운 미로를 고른다.
+   정답이 지나치게 짧은 미로는 아예 후보에서 뺀다(쉬운 뽑기 제거). */
+function genBestMaze(cols, rows){
+  const floor = 3*(cols + rows);
+  const t0 = performance.now();
+  let best = null, longEnough = null;
+  for(let i=0; i<40; i++){
+    const m = genMaze(cols, rows);
+    const r = rateMaze(m);
+    if(!r) continue;
+    m.rating = r;
+    if(!best || r.score > best.rating.score) best = m;
+    if(r.len >= floor && (!longEnough || r.score > longEnough.rating.score)) longEnough = m;
+    if(i >= 8 && performance.now() - t0 > 250) break;  // 느린 기기 보호
+  }
+  return longEnough || best;
 }
 
 /* ── 벽 판정: 검은 칸이면 통과 불가 ── */
@@ -420,7 +492,7 @@ function resetTrail(){
 
 function newMaze(){
   seedCols = parseInt($('lv').value, 10);
-  maze = genMaze(seedCols, seedCols);
+  maze = genBestMaze(seedCols, seedCols);
   resetTrail();
   layout();
   showBest();
