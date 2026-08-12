@@ -23,5 +23,6 @@
 
 ## 배포
 
-`main` 에 푸시하면 GitHub Actions 가 GitHub Pages 로 자동 배포한다
-(`.github/workflows/pages.yml`). 의존성이 없는 단일 HTML 파일이라 빌드 단계는 없다.
+`main` 에 푸시하면 GitHub Pages 가 자동으로 다시 배포한다
+(Settings → Pages → Deploy from a branch → main / (root)).
+의존성이 없는 단일 HTML 파일이라 빌드 단계가 없다. `.nojekyll` 은 Jekyll 처리를 끈다.
