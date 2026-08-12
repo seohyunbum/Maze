@@ -1,6 +1,6 @@
 # 🌀 손으로 그리는 미로
 
-### ▶️ 지금 바로 하기 — https://seohyunbum.github.io/maze/
+### ▶️ 지금 바로 하기 — https://seohyunbum.github.io/Maze/
 
 링크만 있으면 친구도 바로 할 수 있습니다. 설치도, 로그인도 필요 없습니다.
 휴대폰·태블릿에서도 손가락으로 됩니다.
