@@ -4,6 +4,17 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
 <title>손으로 그리는 미로</title>
+
+<!-- 홈 화면에 설치되는 앱(PWA)으로 동작하기 위한 선언 -->
+<link rel="manifest" href="./manifest.webmanifest" />
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#13171d" media="(prefers-color-scheme: dark)" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="미로" />
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+<link rel="icon" href="./icons/icon-192.png" />
 <style>
   /* 미로 자체(흰 종이 + 검은 벽 + 검은 선)는 규칙이므로 테마와 무관하게 고정한다.
      테마를 타는 것은 미로를 둘러싼 UI뿐이다. */
@@ -34,11 +45,20 @@
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
   html,body{margin:0; height:100%; overflow:hidden;
     background:var(--shell); color:var(--text);
+    /* 당겨서 새로고침·고무줄 스크롤을 끈다 — 미로를 긋다가 화면이 튀면 안 된다 */
+    overscroll-behavior:none; touch-action:none;
+    -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
     font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,-apple-system,sans-serif}
-  #wrap{position:fixed; inset:0; display:flex; flex-direction:column; background:var(--shell)}
+  /* 100vh 는 모바일 주소창 때문에 어긋난다. dvh 를 쓰되 미지원 기기는 100% 로. */
+  #wrap{position:fixed; inset:0; height:100%; height:100dvh;
+    display:flex; flex-direction:column; background:var(--shell)}
 
+  /* 노치·홈 인디케이터를 피한다 */
   #hud{display:flex; gap:8px; align-items:center; flex-wrap:wrap;
-    padding:9px 12px; background:var(--panel); border-bottom:1px solid var(--rule); z-index:5}
+    padding:9px 12px; background:var(--panel); border-bottom:1px solid var(--rule); z-index:5;
+    padding-top:calc(9px + env(safe-area-inset-top));
+    padding-left:calc(12px + env(safe-area-inset-left));
+    padding-right:calc(12px + env(safe-area-inset-right))}
   .stat{border:1px solid var(--rule); border-radius:9px; padding:4px 10px; min-width:64px; background:var(--raise)}
   .stat .k{font-size:10px; color:var(--muted); letter-spacing:.09em}
   .stat .v{font-size:17px; font-weight:800; line-height:1.15; font-variant-numeric:tabular-nums}
@@ -54,13 +74,21 @@
   .legend .s{background:#0b7a52} .legend .g{background:#c62b40} .legend .w{background:#000}
 
   /* 미로는 책상 위에 놓인 종이 한 장처럼 */
-  #stage{flex:1; position:relative; display:flex; align-items:center; justify-content:center; padding:12px}
+  #stage{flex:1; min-height:0; position:relative; display:flex; align-items:center; justify-content:center;
+    padding:12px;
+    padding-bottom:calc(12px + env(safe-area-inset-bottom));
+    padding-left:calc(12px + env(safe-area-inset-left));
+    padding-right:calc(12px + env(safe-area-inset-right))}
   canvas{display:block; touch-action:none; background:#fff;
     border:1px solid var(--rule); border-radius:4px; box-shadow:var(--shadow)}
 
-  #toast{position:absolute; left:50%; bottom:18px; transform:translateX(-50%);
-    background:#12151a; color:#fff; font-weight:700; font-size:14px;
-    padding:9px 15px; border-radius:999px; opacity:0; pointer-events:none; transition:opacity .18s}
+  /* 좁은 화면에서 글이 두 줄이 되어도 모양이 깨지지 않도록
+     너비를 제한하고 알약(999px) 대신 둥근 사각형을 쓴다 */
+  #toast{position:absolute; left:50%; transform:translateX(-50%);
+    bottom:calc(18px + env(safe-area-inset-bottom));
+    max-width:min(320px, calc(100% - 24px)); width:max-content; text-align:center;
+    background:#12151a; color:#fff; font-weight:700; font-size:14px; line-height:1.4;
+    padding:9px 15px; border-radius:14px; opacity:0; pointer-events:none; transition:opacity .18s}
   #toast.on{opacity:1}
 
   #over{position:absolute; inset:0; display:none; align-items:center; justify-content:center;
@@ -76,11 +104,12 @@
   @media (prefers-reduced-motion:reduce){ *{transition:none !important} }
 
   @media (max-width:640px){
-    #hud{gap:6px; padding:7px 8px}
+    #hud{gap:6px; padding:7px 8px; padding-top:calc(7px + env(safe-area-inset-top))}
     .stat{min-width:52px; padding:3px 8px} .stat .k{font-size:9px} .stat .v{font-size:15px}
     button,select{padding:7px 11px; font-size:13px; min-height:40px}
-    .legend{width:100%; order:9; justify-content:center}
-    #stage{padding:6px}
+    /* 범례는 설명일 뿐이다. 좁은 화면에서는 그 자리를 미로에 준다. */
+    .legend{display:none}
+    #stage{padding:6px; padding-bottom:calc(6px + env(safe-area-inset-bottom))}
   }
 </style>
 </head>
@@ -101,6 +130,7 @@
     <button id="btnRetry">다시 그리기</button>
     <button id="btnNew" class="primary">새 미로</button>
     <button id="btnHint">정답 보기</button>
+    <button id="btnInstall" hidden>📲 앱으로 설치</button>
     <div class="legend">
       <span><i class="w"></i>벽(통과 불가)</span>
       <span><i class="s"></i>시작</span>
@@ -157,7 +187,9 @@ let solved = false;
 let hits = 0;         // 벽에 막힌 횟수
 let t0 = 0, elapsed = 0, running = false;
 let hintPath = null;  // 정답 경로 (unit 좌표 배열)
-let seedCols = 12;
+let seedCols = 16;
+let grabOff = {x:0, y:0}; // 잡은 순간의 손가락↔펜 간격 (펜이 손가락으로 튀지 않게)
+let touchMode = false;    // 손가락 입력이면 펜 표시를 크게 (손에 가려지므로)
 
 /* ── 미로 생성 : recursive backtracker (항상 풀 수 있는 미로) ── */
 function genMaze(cols, rows){
@@ -377,9 +409,7 @@ function buildMazeCanvas(){
 }
 
 function layout(){
-  const stage = document.getElementById('stage');
-  const availW = stage.clientWidth  - 12;
-  const availH = stage.clientHeight - 12;
+  const {w: availW, h: availH} = stageBox();
   S = Math.max(4, Math.floor(Math.min(availW/maze.W, availH/maze.H)));
 
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -425,11 +455,14 @@ function draw(){
   ctx.beginPath();
   ctx.arc(pen.x*S, pen.y*S, TRAIL_W*S*0.72, 0, Math.PI*2);
   ctx.fill();
+  // 끄는 동안 펜 둘레에 고리를 그린다. 손가락 입력이면 손끝보다 크게 그려서
+  // 손에 가려져도 펜이 어디 있는지 보이게 한다.
   if(dragging){
-    ctx.strokeStyle = 'rgba(0,0,0,.25)';
-    ctx.lineWidth = Math.max(1, S*0.08);
+    const r = touchMode ? Math.max(TRAIL_W*S*1.35, 26) : TRAIL_W*S*1.35;
+    ctx.strokeStyle = 'rgba(0,0,0,.3)';
+    ctx.lineWidth = Math.max(1.5, S*0.08);
     ctx.beginPath();
-    ctx.arc(pen.x*S, pen.y*S, TRAIL_W*S*1.35, 0, Math.PI*2);
+    ctx.arc(pen.x*S, pen.y*S, r, 0, Math.PI*2);
     ctx.stroke();
   }
 
@@ -454,6 +487,15 @@ cv.addEventListener('pointerdown', e => {
     toast('✋ 펜(검은 점)에서 이어서 그려 주세요');
     return;
   }
+  // 잡은 순간의 "손가락 → 펜" 거리를 유지한다. 펜이 손가락으로 순간이동하지 않고,
+  // 휴대폰에서 펜 살짝 아래를 잡으면 손가락에 가려지지 않은 채로 끌 수 있다.
+  grabOff.x = pen.x - p.x;
+  grabOff.y = pen.y - p.y;
+  touchMode = (e.pointerType === 'touch');
+  if(touchMode && !localStorage.getItem('maze.tip')){
+    localStorage.setItem('maze.tip', '1');
+    toast('💡 펜 살짝 아래를 잡으면 손에 안 가려져요');
+  }
   dragging = true;
   cv.setPointerCapture(e.pointerId);
   if(!running && !solved){ running = true; t0 = performance.now() - elapsed*1000; }
@@ -462,9 +504,15 @@ cv.addEventListener('pointerdown', e => {
 
 cv.addEventListener('pointermove', e => {
   if(!dragging || solved) return;
-  // 한 프레임에 여러 좌표가 모이면 전부 순서대로 처리 → 빠르게 그어도 벽을 못 넘는다
-  const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
-  for(const ev of evts){ const p = toUnit(ev); moveTo(p.x, p.y); }
+  // 한 프레임에 여러 좌표가 모이면 전부 순서대로 처리 → 빠르게 그어도 벽을 못 넘는다.
+  // 빈 배열을 돌려주는 브라우저가 있어(합성 이벤트 등) 그때는 이벤트 자체를 쓴다.
+  // 이 방어가 없으면 입력이 통째로 무시돼 펜이 아예 안 움직인다.
+  let evts = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
+  if(!evts || !evts.length) evts = [e];
+  for(const ev of evts){
+    const p = toUnit(ev);
+    moveTo(p.x + grabOff.x, p.y + grabOff.y);
+  }
   e.preventDefault();
 });
 
@@ -490,15 +538,50 @@ function resetTrail(){
   $('over').classList.remove('on');
 }
 
+/* 화면 비율에 맞춰 미로 모양을 정한다.
+   정사각 미로를 세로로 긴 휴대폰에 넣으면 위아래가 남고 칸이 쓸데없이 작아진다.
+   짧은 쪽을 난이도(base)로 고정하고 긴 쪽을 늘려 화면을 채운다 → 칸이 커져서
+   손가락으로 긋기 쉬워지고, 칸 수가 늘어 난이도도 올라간다. */
+/* 미로를 실제로 그릴 수 있는 영역(패딩 제외). pickDims 와 layout 이
+   같은 값을 봐야 예측한 칸 크기와 실제 칸 크기가 어긋나지 않는다. */
+function stageBox(){
+  const st = $('stage'), cs = getComputedStyle(st);
+  return {
+    w: Math.max(0, st.clientWidth  - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)),
+    h: Math.max(0, st.clientHeight - parseFloat(cs.paddingTop)  - parseFloat(cs.paddingBottom)),
+  };
+}
+
+function pickDims(base){
+  const {w, h} = stageBox();
+  if(!(w > 0 && h > 0)) return {cols: base, rows: base};
+
+  const ar = w / h, MAX = 3.6;   // 이보다 길쭉해지면 미로가 복도처럼 단조로워진다
+  // 손가락으로 긋는 화면에서는 칸이 일정 크기보다 작아지면 아예 못 논다.
+  // (가로로 눕힌 휴대폰이 특히 그렇다 — 높이가 얼마 안 남는다.)
+  // 그럴 때는 난이도를 한 단계씩 낮춰서라도 칸 크기를 확보한다.
+  const MIN_CELL = matchMedia('(pointer: coarse)').matches ? 10 : 7;
+
+  for(let b = base; ; b--){
+    const cols = ar >= 1 ? Math.round(b * Math.min(ar, MAX)) : b;
+    const rows = ar >= 1 ? b : Math.round(b / Math.max(ar, 1/MAX));
+    // layout() 과 똑같이 내림해서 실제 칸 크기를 그대로 본다
+    const cell = Math.floor(Math.min(w/(cols*2+1), h/(rows*2+1)));
+    if(cell >= MIN_CELL || b <= 6) return {cols, rows};
+  }
+}
+
 function newMaze(){
   seedCols = parseInt($('lv').value, 10);
-  maze = genBestMaze(seedCols, seedCols);
+  const {cols, rows} = pickDims(seedCols);
+  maze = genBestMaze(cols, rows);
   resetTrail();
   layout();
   showBest();
 }
 
-function bestKey(){ return 'maze.best.' + seedCols; }
+// 모양이 다르면 걸리는 시간도 다르므로 기록도 모양별로 따로 남긴다
+function bestKey(){ return `maze.best.${maze.cols}x${maze.rows}`; }
 function showBest(){
   const b = localStorage.getItem(bestKey());
   $('tBest').textContent = b ? parseFloat(b).toFixed(1) : '-';
@@ -550,6 +633,41 @@ $('btnHint').onclick   = () => {
 
 window.addEventListener('resize', () => { if(maze) layout(); });
 window.addEventListener('orientationchange', () => setTimeout(() => { if(maze) layout(); }, 200));
+// 주소창이 접히고 펴질 때 화면 높이가 변한다 (모바일)
+if(window.visualViewport) window.visualViewport.addEventListener('resize', () => { if(maze) layout(); });
+
+/* ── 앱으로 쓰기 (PWA) ── */
+const standalone = window.matchMedia('(display-mode: standalone)').matches
+                || window.navigator.standalone === true;
+
+// 오프라인 실행. file:// 로 열었을 때는 등록되지 않으니 조용히 넘어간다.
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  window.addEventListener('load', () =>
+    navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}
+
+// 안드로이드·크롬: 설치 버튼을 띄운다
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installPrompt = e;
+  $('btnInstall').hidden = false;
+});
+$('btnInstall').onclick = async () => {
+  if(!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+  $('btnInstall').hidden = true;
+};
+window.addEventListener('appinstalled', () => { $('btnInstall').hidden = true; });
+
+// 아이폰 사파리에는 설치 API가 없다. 처음 한 번만 방법을 알려준다.
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+if(isIOS && !standalone && !localStorage.getItem('maze.ios')){
+  localStorage.setItem('maze.ios', '1');
+  setTimeout(() => toast('📲 공유 버튼 → "홈 화면에 추가" 하면 앱이 돼요'), 1200);
+}
 
 newMaze();
 draw();
