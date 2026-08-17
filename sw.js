@@ -6,7 +6,7 @@
    - 동시에 뒤에서 새 파일을 받아 캐시를 갱신한다 → 다음 실행 때 최신판
    게임을 고쳐 배포할 때는 CACHE 의 버전을 반드시 올릴 것. */
 
-const CACHE = 'maze-v3';
+const CACHE = 'maze-v4';
 const ASSETS = [
   './',
   './index.html',
