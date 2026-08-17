@@ -6,7 +6,7 @@
 <title>손으로 그리는 미로</title>
 
 <!-- 홈 화면에 설치되는 앱(PWA)으로 동작하기 위한 선언 -->
-<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="manifest" href="./manifest.json" />
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
 <meta name="theme-color" content="#13171d" media="(prefers-color-scheme: dark)" />
 <meta name="mobile-web-app-capable" content="yes" />
@@ -787,6 +787,10 @@ const isIOS = /iPad|iPhone|iPod/.test(ua)
            || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);  // 아이패드 iPadOS
 const isSafari = /^((?!chrome|android|crios|fxios|edgios).)*safari/i.test(ua);
 const touchDevice = matchMedia('(pointer: coarse)').matches;
+// 카카오톡·네이버·인스타 등 '앱 안의 브라우저'. 여기서는 홈 화면 설치가 아예 안 된다.
+const isKakao = /KAKAOTALK/i.test(ua);
+const inAppBrowser = isKakao
+  || /NAVER\(inapp|DaumApps|FBAN|FBAV|Instagram|Line\/|; wv\)/i.test(ua);
 
 let installPrompt = null;
 
@@ -795,14 +799,33 @@ function hideSheet(remember){
   if(remember) localStorage.setItem('maze.noinstall', '1');
 }
 
+/* 인트로(SEO 로고)는 화면 전체를 4초쯤 덮는다. 그 밑에 시트를 띄우면
+   보이지도 않고 누를 수도 없다. 인트로가 사라진 뒤에 띄운다. */
+function whenIdentGone(fn){
+  if(!document.getElementById('seo-studio-ident')) return fn();
+  const obs = new MutationObserver(() => {
+    if(!document.getElementById('seo-studio-ident')){ obs.disconnect(); fn(); }
+  });
+  obs.observe(document.body, {childList: true});
+}
+
 /* 설치 안내를 화면 아래에서 바로 띄운다.
-   안드로이드는 '설치하기' 한 번이면 끝나고, 아이폰은 API가 없어 방법만 알려준다. */
+   안드로이드는 '설치하기' 한 번이면 끝나고, 아이폰은 API가 없어 방법만 알려준다.
+   카카오톡 같은 앱 안의 브라우저에서는 설치 기능 자체가 없어서 먼저 밖으로 나가야 한다. */
 function showSheet(mode){
   if(standalone || localStorage.getItem('maze.noinstall')) return;
   if($('install').hidden === false) return;
 
   const msg = $('instMsg'), go = $('instGo'), no = $('instNo');
-  if(mode === 'prompt'){
+  go.onclick = runInstall;
+
+  if(mode === 'inapp'){
+    msg.innerHTML = '지금은 <kbd>앱 안의 브라우저</kbd>라 설치가 안 돼요. ' +
+                    (isIOS ? '<kbd>사파리</kbd>로' : '<kbd>크롬</kbd>으로') + ' 열어야 합니다.';
+    go.hidden = false; go.textContent = '브라우저로 열기';
+    go.onclick = openInBrowser;
+    no.textContent = '나중에';
+  }else if(mode === 'prompt'){
     msg.innerHTML = '한 번만 누르면 홈 화면에 아이콘이 생기고, 인터넷 없이도 열려요.';
     go.hidden = false; go.textContent = '설치하기';
     no.textContent = '나중에';
@@ -815,7 +838,25 @@ function showSheet(mode){
     go.hidden = true;
     no.textContent = '알겠어요';
   }
-  $('install').hidden = false;
+  whenIdentGone(() => { $('install').hidden = false; });
+}
+
+/* 앱 안의 브라우저에서 진짜 브라우저로 빠져나간다.
+   카카오톡은 전용 스킴이 있고, 안드로이드는 intent 로 크롬을 지정할 수 있다.
+   아이폰은 강제로 사파리를 열 방법이 없어 안내만 남긴다. */
+function openInBrowser(){
+  const url = location.href;
+  if(isKakao){
+    location.href = 'kakaotalk://web/openExternal?url=' + encodeURIComponent(url);
+    return;
+  }
+  if(!isIOS){
+    location.href = 'intent://' + url.replace(/^https?:\/\//, '')
+                  + '#Intent;scheme=https;package=com.android.chrome;end';
+    return;
+  }
+  navigator.clipboard?.writeText(url).catch(() => {});
+  toast('주소를 복사했어요. 사파리에 붙여넣어 주세요');
 }
 
 // 안드로이드·크롬: 설치 가능해지는 순간 바로 띄운다
@@ -839,9 +880,14 @@ $('btnInstall').onclick = runInstall;
 $('instNo').onclick = () => hideSheet(true);
 window.addEventListener('appinstalled', () => { $('btnInstall').hidden = true; hideSheet(true); });
 
-// 아이폰에는 설치 API가 없다. 열자마자 방법을 보여준다.
-if(isIOS && !standalone){
-  setTimeout(() => showSheet(isSafari ? 'ios' : 'ios-other'), 700);
+// 열자마자 상황에 맞는 안내를 띄운다.
+// 앱 안의 브라우저가 가장 흔한 실패 원인이라 제일 먼저 잡는다.
+if(!standalone && touchDevice){
+  setTimeout(() => {
+    if(inAppBrowser)      showSheet('inapp');
+    else if(isIOS)        showSheet(isSafari ? 'ios' : 'ios-other');
+    // 안드로이드 정상 브라우저는 beforeinstallprompt 가 오면 그때 띄운다
+  }, 700);
 }
 
 newMaze();
