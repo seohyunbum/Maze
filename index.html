@@ -101,6 +101,27 @@
   #over p b{color:var(--text); font-variant-numeric:tabular-nums}
   #over .btns{display:flex; gap:9px; justify-content:center; flex-wrap:wrap}
 
+  /* 설치 안내 시트 — 열자마자 아래에서 올라온다 */
+  #install{position:fixed; left:0; right:0; bottom:0; z-index:20;
+    padding:0 10px calc(10px + env(safe-area-inset-bottom));
+    display:flex; justify-content:center; pointer-events:none}
+  /* display 를 지정하면 hidden 속성(UA의 display:none)을 이겨버린다. 명시적으로 되돌린다. */
+  #install[hidden]{display:none}
+  #install .sheet{pointer-events:auto; width:100%; max-width:460px;
+    background:var(--panel); border:1px solid var(--rule); border-radius:18px;
+    box-shadow:0 -6px 34px rgba(0,0,0,.26); padding:14px 15px;
+    display:grid; grid-template-columns:auto 1fr; gap:11px 12px; align-items:center;
+    animation:sheetUp .28s cubic-bezier(.2,.9,.3,1) both}
+  @keyframes sheetUp{from{transform:translateY(120%)} to{transform:translateY(0)}}
+  #install .ic{width:46px; height:46px; border-radius:11px; border:1px solid var(--rule)}
+  #install b{display:block; font-size:15px; margin-bottom:2px}
+  #install .msg{font-size:13px; color:var(--muted); line-height:1.5}
+  #install .msg kbd{font:inherit; font-weight:800; color:var(--text);
+    background:var(--raise); border:1px solid var(--rule); border-radius:6px; padding:1px 6px}
+  #install .act{grid-column:1 / -1; display:flex; gap:8px}
+  #install .act button{flex:1; min-height:46px}
+  @media (prefers-reduced-motion:reduce){ #install .sheet{animation:none} }
+
   @media (prefers-reduced-motion:reduce){ *{transition:none !important} }
 
   @media (max-width:640px){
@@ -253,6 +274,20 @@ if (shouldPlaySeoIdent(location.search, navigator.webdriver)) mountSeoStudioIden
       </div>
     </div>
   </main>
+
+  <div id="install" hidden>
+    <div class="sheet">
+      <img class="ic" src="./icons/icon-192.png" alt="" />
+      <div>
+        <b>홈 화면에 앱으로 설치</b>
+        <div class="msg" id="instMsg"></div>
+      </div>
+      <div class="act">
+        <button id="instGo" class="primary">설치하기</button>
+        <button id="instNo">나중에</button>
+      </div>
+    </div>
+  </div>
 
 </div>
 
@@ -747,27 +782,66 @@ if('serviceWorker' in navigator && location.protocol.startsWith('http')){
     navigator.serviceWorker.register('./sw.js').catch(() => {}));
 }
 
-// 안드로이드·크롬: 설치 버튼을 띄운다
+const ua = navigator.userAgent;
+const isIOS = /iPad|iPhone|iPod/.test(ua)
+           || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);  // 아이패드 iPadOS
+const isSafari = /^((?!chrome|android|crios|fxios|edgios).)*safari/i.test(ua);
+const touchDevice = matchMedia('(pointer: coarse)').matches;
+
 let installPrompt = null;
+
+function hideSheet(remember){
+  $('install').hidden = true;
+  if(remember) localStorage.setItem('maze.noinstall', '1');
+}
+
+/* 설치 안내를 화면 아래에서 바로 띄운다.
+   안드로이드는 '설치하기' 한 번이면 끝나고, 아이폰은 API가 없어 방법만 알려준다. */
+function showSheet(mode){
+  if(standalone || localStorage.getItem('maze.noinstall')) return;
+  if($('install').hidden === false) return;
+
+  const msg = $('instMsg'), go = $('instGo'), no = $('instNo');
+  if(mode === 'prompt'){
+    msg.innerHTML = '한 번만 누르면 홈 화면에 아이콘이 생기고, 인터넷 없이도 열려요.';
+    go.hidden = false; go.textContent = '설치하기';
+    no.textContent = '나중에';
+  }else if(mode === 'ios'){
+    msg.innerHTML = '아래 <kbd>공유</kbd> 버튼 → <kbd>홈 화면에 추가</kbd> 를 누르면 앱이 돼요.';
+    go.hidden = true;
+    no.textContent = '알겠어요';
+  }else{ // 아이폰인데 사파리가 아니면 설치 자체가 불가능하다
+    msg.innerHTML = '<kbd>사파리</kbd>로 열어야 홈 화면에 설치할 수 있어요.';
+    go.hidden = true;
+    no.textContent = '알겠어요';
+  }
+  $('install').hidden = false;
+}
+
+// 안드로이드·크롬: 설치 가능해지는 순간 바로 띄운다
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   installPrompt = e;
-  $('btnInstall').hidden = false;
+  $('btnInstall').hidden = false;         // HUD 버튼은 항상 남겨둔다
+  if(touchDevice) showSheet('prompt');    // 데스크톱까지 가로막지는 않는다
 });
-$('btnInstall').onclick = async () => {
+
+async function runInstall(){
   if(!installPrompt) return;
-  installPrompt.prompt();
+  installPrompt.prompt();                 // 사용자가 누른 직후여야 열린다
   await installPrompt.userChoice;
   installPrompt = null;
   $('btnInstall').hidden = true;
-};
-window.addEventListener('appinstalled', () => { $('btnInstall').hidden = true; });
+  hideSheet(false);
+}
+$('instGo').onclick = runInstall;
+$('btnInstall').onclick = runInstall;
+$('instNo').onclick = () => hideSheet(true);
+window.addEventListener('appinstalled', () => { $('btnInstall').hidden = true; hideSheet(true); });
 
-// 아이폰 사파리에는 설치 API가 없다. 처음 한 번만 방법을 알려준다.
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-if(isIOS && !standalone && !localStorage.getItem('maze.ios')){
-  localStorage.setItem('maze.ios', '1');
-  setTimeout(() => toast('📲 공유 버튼 → "홈 화면에 추가" 하면 앱이 돼요'), 1200);
+// 아이폰에는 설치 API가 없다. 열자마자 방법을 보여준다.
+if(isIOS && !standalone){
+  setTimeout(() => showSheet(isSafari ? 'ios' : 'ios-other'), 700);
 }
 
 newMaze();
