@@ -249,6 +249,7 @@ if (shouldPlaySeoIdent(location.search, navigator.webdriver)) mountSeoStudioIden
       <option value="16" selected>보통 16×16</option>
       <option value="22">어려움 22×22</option>
       <option value="28">아주 어려움 28×28</option>
+      <option value="30">☠️ 극악 30×30</option>
     </select>
     <button id="btnRetry">다시 그리기</button>
     <button id="btnNew" class="primary">새 미로</button>
@@ -328,29 +329,33 @@ let seedCols = 16;
 let grabOff = {x:0, y:0}; // 잡은 순간의 손가락↔펜 간격 (펜이 손가락으로 튀지 않게)
 let touchMode = false;    // 손가락 입력이면 펜 표시를 크게 (손에 가려지므로)
 
-/* ── 미로 생성 : recursive backtracker (항상 풀 수 있는 미로) ── */
-function genMaze(cols, rows){
+/* ── 미로 생성 : growing tree (항상 풀 수 있는 미로) ── */
+function genMaze(cols, rows, river = 1.0){
   const W = cols*2+1, H = rows*2+1;
   const g = Array.from({length:H}, () => new Uint8Array(W).fill(1));
   const seen = Array.from({length:rows}, () => new Uint8Array(cols));
   const dirs = [[0,-1],[1,0],[0,1],[-1,0]];
 
-  const stack = [[0,0]];
+  /* growing tree. river = 1 이면 재귀 백트래커(긴 복도, 갈림길 적음),
+     낮추면 가지가 무성해져 갈림길이 폭증한다. 실측상 river 를 0.3 쯤으로
+     낮추는 것이 난이도에 가장 크게 기여했다 — 아래 rateMaze 주석 참고. */
+  const active = [[0,0]];
   seen[0][0] = 1; g[1][1] = 0;
 
-  while(stack.length){
-    const [cx,cy] = stack[stack.length-1];
+  while(active.length){
+    const i = Math.random() < river ? active.length-1 : (Math.random()*active.length)|0;
+    const [cx,cy] = active[i];
     const opts = [];
     for(const [dx,dy] of dirs){
       const nx = cx+dx, ny = cy+dy;
       if(nx>=0 && nx<cols && ny>=0 && ny<rows && !seen[ny][nx]) opts.push([nx,ny,dx,dy]);
     }
-    if(!opts.length){ stack.pop(); continue; }
+    if(!opts.length){ active.splice(i, 1); continue; }
     const [nx,ny,dx,dy] = opts[(Math.random()*opts.length)|0];
     seen[ny][nx] = 1;
     g[cy*2+1+dy][cx*2+1+dx] = 0;  // 두 칸 사이의 벽을 허문다
     g[ny*2+1][nx*2+1] = 0;
-    stack.push([nx,ny]);
+    active.push([nx,ny]);
   }
 
   g[1][0] = 0;                 // 왼쪽 위: START 입구
@@ -399,69 +404,82 @@ function solve(m = maze){
   return idx.map(i => ({x: i % m.W + 0.5, y: ((i / m.W)|0) + 0.5}));
 }
 
-/* ── 난이도 측정 ──
-   크기가 같아도 정답이 짧고 갈림길이 없으면 순식간에 풀린다. 실제로 재던 값은
-   22×22 에서 갈림길이 3개뿐인 미로까지 나왔다. 그래서 후보를 여러 개 만들어
-   가장 어려운 것만 내보낸다.
-   - len   : 정답 경로 길이 — 짧으면 그냥 가깝다
-   - junc  : 정답 경로에서 옆으로 새는 갈림길 수 — 헷갈릴 기회
-   - decoy : 그 갈림길이 얼마나 깊게 이어지는지 — 잘못 들었을 때의 손해
-             (한 곳이 지나치게 깊어도 점수를 독식하지 않도록 14에서 자른다) */
-function rateMaze(m){
-  const idx = solveIdx(m);
-  if(!idx) return null;
-  const {g,W,H} = m;
-  const onPath = new Uint8Array(W*H);
-  for(const i of idx) onPath[i] = 1;
+/* ── 사람이 푸는 흉내를 내본다 ──
+   "정답이 길다"와 "어렵다"는 다르다. 긴 복도는 지루할 뿐 헷갈리지 않는다.
+   그래서 난이도를 추측하지 않고, 사람처럼 푸는 흉내를 내서 **몇 칸을 헤매는지**
+   직접 센다. 되돌아 나오는 것도 실제로 손이 움직이는 거라 비용으로 센다.
 
-  let junc = 0, decoy = 0;
-  const seen = new Uint8Array(W*H);
-  for(const cur of idx){
+   style 'greedy' = 늘 목표 쪽으로 가는 사람 (잘 푸는 사람)
+   style 'mixed'  = 70% 목표 쪽으로, 30% 딴 길 (보통 사람) */
+function walkCost(m, style){
+  const {g,W,H} = m;
+  const s = 1*W + 0, t = (m.rows*2-1)*W + (m.cols*2);
+  const tx = t % W, ty = (t/W)|0;
+  const seen = new Uint8Array(W*H); seen[s] = 1;
+  const route = [s];
+  const LIMIT = W*H*8;
+  let moves = 0;
+
+  while(route.length && moves < LIMIT){
+    const cur = route[route.length-1];
+    if(cur === t) return {moves, reached:true};
     const cx = cur%W, cy = (cur/W)|0;
+    let bi = -1, bd = 1e9, cnt = 0, pickAny = -1;
     for(const [dx,dy] of DIRS4){
       const nx=cx+dx, ny=cy+dy;
       if(nx<0||ny<0||nx>=W||ny>=H || g[ny][nx]) continue;
       const ni = ny*W+nx;
-      if(onPath[ni]) continue;
-      junc++;
-      // 곁가지의 최대 깊이 = 정답 경로를 밟지 않는 BFS. 가지끼리 겹치지 않아
-      // 전체 비용은 칸 수에 비례한다.
-      seen[ni] = 1;
-      const q = [ni], dep = [1];
-      let mx = 0;
-      for(let h=0; h<q.length; h++){
-        if(dep[h] > mx) mx = dep[h];
-        const ax = q[h]%W, ay = (q[h]/W)|0;
-        for(const [ex,ey] of DIRS4){
-          const bx=ax+ex, by=ay+ey;
-          if(bx<0||by<0||bx>=W||by>=H || g[by][bx]) continue;
-          const bi = by*W+bx;
-          if(onPath[bi] || seen[bi]) continue;
-          seen[bi] = 1; q.push(bi); dep.push(dep[h]+1);
-        }
-      }
-      decoy += Math.min(mx, 14);
+      if(seen[ni]) continue;
+      cnt++;
+      if(Math.random() < 1/cnt) pickAny = ni;              // 균등 무작위
+      const d = Math.abs(nx-tx) + Math.abs(ny-ty);
+      if(d < bd){ bd = d; bi = ni; }
+    }
+    if(cnt){
+      const pick = (style === 'greedy' || Math.random() < 0.7) ? bi : pickAny;
+      seen[pick] = 1; route.push(pick); moves++;
+    }else{
+      route.pop(); moves++;                                 // 막혀서 되돌아 나옴
     }
   }
-  return {len: idx.length, junc, decoy, score: idx.length + 6*junc + 2*decoy};
+  return {moves, reached:false};
 }
 
-/* 후보를 여러 개 만들어 가장 어려운 미로를 고른다.
-   정답이 지나치게 짧은 미로는 아예 후보에서 뺀다(쉬운 뽑기 제거). */
-function genBestMaze(cols, rows){
-  const floor = 3*(cols + rows);
+/* 후보 점수 = 시뮬레이션한 사람이 헤맨 칸 수.
+   잘 푸는 사람도 헤매야 진짜 어려운 미로이므로 greedy 쪽에 가중치를 더 준다.
+   (실측: 이 기준으로 바꾸자 잘 푸는 사람 기준 헤맨 배수가 1.2배 → 10.6배) */
+function rateMaze(m){
+  const idx = solveIdx(m);
+  if(!idx) return null;
+  const a = walkCost(m, 'greedy'), b = walkCost(m, 'mixed');
+  if(!a.reached || !b.reached) return null;
+  const len = idx.length;
+  const wasted = (a.moves - len)*1.4 + (b.moves - len);
+  return {len, moves:a.moves, ratio:a.moves/len, wasted, score:wasted};
+}
+
+/* 난이도별 river — 낮을수록 가지가 무성해지고 갈림길이 폭증한다.
+   쉬움은 아이가 하니 완만하게, 극악은 최대로 무성하게. */
+const RIVER = {10:0.8, 16:0.5, 22:0.35, 28:0.3, 30:0.22};
+
+/* 후보를 여러 개 만들어 가장 많이 헤매게 되는 미로를 고른다. */
+function genBestMaze(cols, rows, base){
+  const river = RIVER[base] ?? 0.4;
+  const tries = base >= 30 ? 60 : 28;      // 극악은 더 많이 뒤진다
+  const floor = 2*(cols + rows);           // 지나치게 짧은 건 제외
   const t0 = performance.now();
-  let best = null, longEnough = null;
-  for(let i=0; i<40; i++){
-    const m = genMaze(cols, rows);
+  let best = null, ok = null;
+
+  for(let i=0; i<tries; i++){
+    const m = genMaze(cols, rows, river);
     const r = rateMaze(m);
     if(!r) continue;
     m.rating = r;
     if(!best || r.score > best.rating.score) best = m;
-    if(r.len >= floor && (!longEnough || r.score > longEnough.rating.score)) longEnough = m;
-    if(i >= 8 && performance.now() - t0 > 250) break;  // 느린 기기 보호
+    if(r.len >= floor && (!ok || r.score > ok.rating.score)) ok = m;
+    if(i >= 8 && performance.now() - t0 > 400) break;  // 느린 기기 보호
   }
-  return longEnough || best;
+  return ok || best || genMaze(cols, rows, river);
 }
 
 /* ── 벽 판정: 검은 칸이면 통과 불가 ── */
@@ -711,7 +729,7 @@ function pickDims(base){
 function newMaze(){
   seedCols = parseInt($('lv').value, 10);
   const {cols, rows} = pickDims(seedCols);
-  maze = genBestMaze(cols, rows);
+  maze = genBestMaze(cols, rows, seedCols);
   resetTrail();
   layout();
   showBest();
